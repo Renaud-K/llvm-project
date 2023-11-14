@@ -11239,7 +11239,26 @@ Value *BoUpSLP::vectorizeTree(TreeEntry *E, bool PostponedPHIs) {
       }
 
       auto *CI = cast<CastInst>(VL0);
-      Value *V = Builder.CreateCast(CI->getOpcode(), InVec, VecTy);
+      Instruction::CastOps VecOpcode = CI->getOpcode();
+      Type *SrcScalarTy = VL0->getOperand(0)->getType();
+      auto SrcIt = MinBWs.find(VL0->getOperand(0));
+      if (!ScalarTy->isFloatingPointTy() && !SrcScalarTy->isFloatingPointTy() &&
+          (SrcIt != MinBWs.end() || It != MinBWs.end())) {
+        // Check if the values are candidates to demote.
+        unsigned SrcBWSz = DL->getTypeSizeInBits(SrcScalarTy);
+        if (SrcIt != MinBWs.end())
+          SrcBWSz = SrcIt->second.first;
+        unsigned BWSz = DL->getTypeSizeInBits(ScalarTy);
+        if (BWSz == SrcBWSz) {
+          VecOpcode = Instruction::BitCast;
+        } else if (BWSz < SrcBWSz) {
+          VecOpcode = Instruction::Trunc;
+        } else if (It != MinBWs.end()) {
+          assert(BWSz > SrcBWSz && "Invalid cast!");
+          VecOpcode = It->second.second ? Instruction::SExt : Instruction::ZExt;
+        }
+      }
+      Value *V = Builder.CreateCast(VecOpcode, InVec, VecTy);
       V = FinalShuffle(V, E, VecTy, IsSigned);
 
       E->VectorizedValue = V;
